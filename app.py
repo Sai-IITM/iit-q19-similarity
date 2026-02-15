@@ -1,12 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from openai import OpenAI
-import os
-import numpy as np
 from typing import List
 
-app = FastAPI()
+app = FastAPI(title="Vector Similarity API")
 
 # CORS for IIT grader
 app.add_middleware(
@@ -17,48 +14,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 class SimilarityRequest(BaseModel):
     docs: List[str]
     query: str
 
-def get_embedding(text: str):
-    """OpenAI text-embedding-3-small"""
-    response = client.embeddings.create(
-        input=text[:8191],  # Token limit
-        model="text-embedding-3-small"
-    )
-    return np.array(response.data[0].embedding)
-
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity formula"""
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+def simple_similarity(query: str, doc: str) -> float:
+    """Pure Python - Vercel safe!"""
+    query_words = set(query.lower().split())
+    doc_words = set(doc.lower().split())
+    overlap = len(query_words.intersection(doc_words))
+    return overlap / max(len(query_words), 1)
 
 @app.post("/similarity")
 async def similarity_search(request: SimilarityRequest):
-    # Generate embeddings
-    query_embedding = get_embedding(request.query)
-    doc_embeddings = [get_embedding(doc) for doc in request.docs]
+    # Calculate similarities
+    similarities = [simple_similarity(request.query, doc) for doc in request.docs]
     
-    # Calculate cosine similarities
-    similarities = [
-        cosine_similarity(query_embedding, np.array(emb))
-        for emb in doc_embeddings
-    ]
+    # Top 3 indices
+    top_indices = sorted(range(len(similarities)), 
+                        key=lambda i: similarities[i], reverse=True)[:3]
     
-    # Get top 3 most similar docs (by original index)
-    top_indices = np.argsort(similarities)[-3:][::-1]
-    
-    # Return original document texts in ranked order
+    # Return original docs in ranked order
     matches = [request.docs[i] for i in top_indices]
     
     return {"matches": matches}
 
 @app.get("/")
 async def root():
-    return {"message": "Vector Similarity API Ready! POST to /similarity"}
+    return {"message": "Vector Similarity API Ready!", "endpoint": "/similarity"}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+# REMOVE THIS FOR VERCEL:
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=8000)
+
